@@ -4,36 +4,562 @@
 <html lang="pl">
   <head>
     <meta charset="UTF-8" />
-    <title>AI News Portal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Arcade</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <h1>AI‑Generated News</h1>
-    <div id="news"></div>
-    <script>
-      async function loadNews() {
-        try {
-          const response = await fetch('/daily/latest.json');
-          if (!response.ok) throw new Error('daily index not found');
-          const data = await response.json();
-          const container = document.getElementById('news');
-          if (Array.isArray(data.news)) {
-            data.news.forEach(id => {
-              const item = document.createElement('div');
-              const link = document.createElement('a');
-              link.href = `/news/${id}.json`;
-              link.textContent = id;
-              item.appendChild(link);
-              container.appendChild(item);
-            });
-          } else {
-            container.textContent = 'Brak danych';
-          }
-        } catch (err) {
-          document.getElementById('news').textContent = err.message;
+    <main class="layout" aria-labelledby="appTitle">
+      <section class="board-shell">
+        <div class="board-surface">
+          <header class="board-header">
+            <h1 id="appTitle">AI Arcade Cabinet</h1>
+            <p>Eksperymentalna plansza sterowana sztuczną inteligencją.</p>
+          </header>
+          <div class="board-grid">
+            <div class="board-card">
+              <h2>Tryb kampanii</h2>
+              <p>Pokonuj zadania, by rozświetlić wszystkie pasy LED.</p>
+            </div>
+            <div class="board-card">
+              <h2>Wyścig punktów</h2>
+              <p>Steruj pochyloną planszą jak automatem arcade.</p>
+            </div>
+            <div class="board-card board-card--highlight">
+              <h2>Nowe czujniki</h2>
+              <p>Aktywuj ruch i haptykę, aby stół reagował jak flipper.</p>
+            </div>
+          </div>
+          <footer class="board-footer">
+            <span class="light-label">Przechyl urządzenie, aby dostosować kamerę</span>
+          </footer>
+        </div>
+      </section>
+      <aside class="side-panel">
+        <section class="menu">
+          <h2>Menu</h2>
+          <ul>
+            <li><button type="button" class="primary">Start</button></li>
+            <li><button type="button" class="ghost">Tryb wyzwań</button></li>
+            <li><button type="button" class="ghost">Ustawienia</button></li>
+          </ul>
+        </section>
+        <section class="credits">
+          <h2>Credits</h2>
+          <p>Zespół: <strong>Narrator AI</strong>, <strong>Projektant Arcade</strong> i <strong>Ty</strong>.</p>
+          <p>Dziękujemy za testy pochylonej planszy i raportowanie wrażeń.</p>
+          <button type="button" id="easterEggButton" class="primary">Easter egg</button>
+        </section>
+        <section class="instructions">
+          <h2>Wskazówki</h2>
+          <ul>
+            <li>Podłącz sterowanie ruchem, aby poczuć ducha flippera.</li>
+            <li>Haptyka uruchamia się podczas stuknięć w obudowę.</li>
+            <li>Bonusowa gra pinball czeka w sekcji Credits.</li>
+          </ul>
+        </section>
+      </aside>
+    </main>
+
+    <div class="pinball-overlay" id="pinballOverlay" aria-hidden="true">
+      <div class="pinball-wrapper" role="dialog" aria-modal="true" aria-labelledby="pinballTitle">
+        <header class="pinball-header">
+          <h2 id="pinballTitle">Bonus: Pinball AI</h2>
+          <button type="button" id="closePinball" class="ghost" aria-label="Zamknij pinball">✕</button>
+        </header>
+        <div class="pinball-board">
+          <canvas id="pinballCanvas" width="360" height="600"></canvas>
+          <div class="pinball-status">
+            <span>Punkty: <strong id="pinballScore">0</strong></span>
+            <span id="sensorStatus" class="sensor-status" aria-live="polite">Sterowanie ruchem nieaktywne</span>
+          </div>
+        </div>
+        <div class="pinball-controls">
+          <button type="button" id="requestMotion" class="ghost hidden">Aktywuj czujniki ruchu</button>
+          <button type="button" id="launchButton" class="primary">Wystrzel kulkę</button>
+        </div>
+        <div class="pinball-flippers">
+          <button type="button" id="tapLeft" class="ghost">Lewy flipper</button>
+          <button type="button" id="tapRight" class="ghost">Prawy flipper</button>
+        </div>
+        <p class="pinball-hints">
+          Puknięcie w lewą lub prawą stronę obudowy uruchamia odpowiedni flipper i daje krótką haptyczną odpowiedź.
+          Aby wystrzelić kulkę użyj mocniejszego nacisku na planszy lub ruchu telefonu w dół i w górę.
+        </p>
+      </div>
+    </div>
+
+    <script type="module">
+      const body = document.body;
+      const overlay = document.getElementById('pinballOverlay');
+      const openPinballButton = document.getElementById('easterEggButton');
+      const closePinballButton = document.getElementById('closePinball');
+      const canvas = document.getElementById('pinballCanvas');
+      const ctx = canvas.getContext('2d');
+      const requestMotionButton = document.getElementById('requestMotion');
+      const sensorStatus = document.getElementById('sensorStatus');
+      const launchButton = document.getElementById('launchButton');
+      const leftButton = document.getElementById('tapLeft');
+      const rightButton = document.getElementById('tapRight');
+      const scoreField = document.getElementById('pinballScore');
+
+      const boardWidth = canvas.width;
+      const boardHeight = canvas.height;
+
+      const ball = { x: boardWidth - 40, y: boardHeight - 60, vx: 0, vy: 0, radius: 11, launched: false };
+      const flippers = {
+        left: { cx: 120, cy: boardHeight - 90, length: 120, thickness: 16, restAngle: 0.25 * Math.PI, swing: -0.4 * Math.PI, active: false, activeUntil: 0 },
+        right: { cx: boardWidth - 120, cy: boardHeight - 90, length: 120, thickness: 16, restAngle: Math.PI - 0.25 * Math.PI, swing: 0.4 * Math.PI, active: false, activeUntil: 0 }
+      };
+      const bumpers = [
+        { x: boardWidth / 2, y: boardHeight / 3, radius: 24 },
+        { x: boardWidth / 2 - 70, y: boardHeight / 2, radius: 18 },
+        { x: boardWidth / 2 + 70, y: boardHeight / 2, radius: 18 }
+      ];
+
+      let animationId = null;
+      let running = false;
+      let motionEnabled = false;
+      let motionListenerAttached = false;
+      let canVibrate = false;
+      let score = 0;
+
+      let lastX = null;
+      let lastShake = 0;
+      let pullStage = 0;
+      let pullStageTime = 0;
+      let pullPeak = 0;
+      let maxPointerPressure = 0;
+      let pointerTrackingId = null;
+      let forceArmed = false;
+
+      function resetBall(fullReset) {
+        ball.x = boardWidth - 40;
+        ball.y = boardHeight - 60;
+        ball.vx = 0;
+        ball.vy = 0;
+        ball.launched = false;
+        if (fullReset) {
+          score = 0;
+          updateScore();
         }
       }
-      loadNews();
+
+      function updateScore() {
+        scoreField.textContent = String(score);
+      }
+
+      function ensureHaptics() {
+        if (canVibrate) return;
+        if (navigator.vibrate) {
+          try {
+            navigator.vibrate(0);
+            canVibrate = true;
+          } catch (err) {
+            canVibrate = false;
+          }
+        }
+      }
+
+      function triggerHaptics(duration = 30) {
+        if (!canVibrate) return;
+        try {
+          navigator.vibrate(duration);
+        } catch (err) {
+          /* brak wsparcia */
+        }
+      }
+
+      async function ensureMotionAccess() {
+        if (motionEnabled) {
+          attachMotionListener();
+          sensorStatus.textContent = 'Sterowanie ruchem aktywne';
+          requestMotionButton.classList.add('hidden');
+          return true;
+        }
+        if (typeof DeviceMotionEvent === 'undefined') {
+          sensorStatus.textContent = 'Brak wsparcia dla akcelerometru.';
+          requestMotionButton.classList.add('hidden');
+          return false;
+        }
+        if (typeof DeviceMotionEvent.requestPermission === 'function') {
+          try {
+            const response = await DeviceMotionEvent.requestPermission();
+            if (response === 'granted') {
+              motionEnabled = true;
+              sensorStatus.textContent = 'Sterowanie ruchem aktywne';
+              requestMotionButton.classList.add('hidden');
+              attachMotionListener();
+              return true;
+            }
+            sensorStatus.textContent = 'Zezwól na dostęp do akcelerometru, aby sterować ruchem.';
+            requestMotionButton.classList.remove('hidden');
+            return false;
+          } catch (error) {
+            sensorStatus.textContent = 'Dotknij „Aktywuj czujniki ruchu”, aby przyznać dostęp.';
+            requestMotionButton.classList.remove('hidden');
+            return false;
+          }
+        } else {
+          motionEnabled = true;
+          sensorStatus.textContent = 'Sterowanie ruchem aktywne';
+          requestMotionButton.classList.add('hidden');
+          attachMotionListener();
+          return true;
+        }
+      }
+
+      function attachMotionListener() {
+        if (motionListenerAttached) return;
+        window.addEventListener('devicemotion', handleMotion);
+        motionListenerAttached = true;
+      }
+
+      function detachMotionListener() {
+        if (!motionListenerAttached) return;
+        window.removeEventListener('devicemotion', handleMotion);
+        motionListenerAttached = false;
+      }
+
+      function activateFlipper(side) {
+        const flipper = flippers[side];
+        if (!flipper) return;
+        const now = performance.now();
+        flipper.active = true;
+        flipper.activeUntil = now + 220;
+        triggerHaptics(35);
+        if (ball.launched && ball.y > boardHeight - 150) {
+          if (side === 'left' && ball.x < boardWidth / 2) {
+            ball.vy = -Math.abs(ball.vy) - 6;
+            ball.vx = -2.8;
+          } else if (side === 'right' && ball.x >= boardWidth / 2) {
+            ball.vy = -Math.abs(ball.vy) - 6;
+            ball.vx = 2.8;
+          }
+        }
+      }
+
+      function launchBall(power = 10) {
+        if (ball.launched) return;
+        ball.launched = true;
+        ball.x = boardWidth - 48;
+        ball.y = boardHeight - 120;
+        ball.vx = -2.6;
+        ball.vy = -Math.abs(power);
+        triggerHaptics(50);
+        pullStage = 0;
+        sensorStatus.textContent = motionEnabled ? 'Sterowanie ruchem aktywne' : sensorStatus.textContent;
+      }
+
+      function updatePhysics() {
+        const now = performance.now();
+        Object.values(flippers).forEach(flipper => {
+          if (flipper.active && now > flipper.activeUntil) {
+            flipper.active = false;
+          }
+        });
+
+        if (!ball.launched) {
+          return;
+        }
+
+        ball.vy += 0.25;
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+        ball.vx *= 0.995;
+        ball.vy *= 0.995;
+
+        if (ball.x - ball.radius < 12) {
+          ball.x = 12 + ball.radius;
+          ball.vx = Math.abs(ball.vx) * 0.9;
+          triggerHaptics(10);
+        }
+        if (ball.x + ball.radius > boardWidth - 12) {
+          ball.x = boardWidth - 12 - ball.radius;
+          ball.vx = -Math.abs(ball.vx) * 0.9;
+          triggerHaptics(10);
+        }
+        if (ball.y - ball.radius < 12) {
+          ball.y = 12 + ball.radius;
+          ball.vy = Math.abs(ball.vy) * 0.9;
+          triggerHaptics(10);
+        }
+
+        bumpers.forEach(bumper => {
+          const dx = ball.x - bumper.x;
+          const dy = ball.y - bumper.y;
+          const distance = Math.hypot(dx, dy);
+          const minDistance = ball.radius + bumper.radius;
+          if (distance < minDistance) {
+            const normalX = dx / (distance || 1);
+            const normalY = dy / (distance || 1);
+            const dot = ball.vx * normalX + ball.vy * normalY;
+            ball.vx -= 2 * dot * normalX;
+            ball.vy -= 2 * dot * normalY;
+            ball.vx += normalX * 3;
+            ball.vy += normalY * 3;
+            ball.x = bumper.x + normalX * minDistance;
+            ball.y = bumper.y + normalY * minDistance;
+            score += 50;
+            updateScore();
+            triggerHaptics(40);
+          }
+        });
+
+        if (ball.y + ball.radius > boardHeight - 14) {
+          triggerHaptics(60);
+          resetBall(false);
+        }
+      }
+
+      function drawScene() {
+        ctx.clearRect(0, 0, boardWidth, boardHeight);
+
+        const background = ctx.createLinearGradient(0, 0, boardWidth, boardHeight);
+        background.addColorStop(0, '#061838');
+        background.addColorStop(0.5, '#102d5c');
+        background.addColorStop(1, '#0b0f25');
+        ctx.fillStyle = background;
+        ctx.fillRect(0, 0, boardWidth, boardHeight);
+
+        ctx.lineWidth = 14;
+        ctx.strokeStyle = '#32e0ff';
+        ctx.strokeRect(8, 8, boardWidth - 16, boardHeight - 16);
+
+        ctx.fillStyle = '#031022';
+        ctx.fillRect(20, 20, boardWidth - 88, boardHeight - 40);
+
+        ctx.fillStyle = '#02152a';
+        ctx.fillRect(boardWidth - 68, 20, 48, boardHeight - 40);
+
+        ctx.fillStyle = '#173f75';
+        ctx.fillRect(boardWidth - 68, boardHeight - 140, 48, 120);
+
+        ctx.strokeStyle = '#45d3ff';
+        ctx.lineWidth = 6;
+        ctx.strokeRect(boardWidth - 68, boardHeight - 140, 48, 120);
+
+        bumpers.forEach(bumper => {
+          const gradient = ctx.createRadialGradient(bumper.x - 6, bumper.y - 6, 6, bumper.x, bumper.y, bumper.radius);
+          gradient.addColorStop(0, '#ffffff');
+          gradient.addColorStop(1, '#ff5894');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(bumper.x, bumper.y, bumper.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff55';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        });
+
+        drawFlipper(flippers.left);
+        drawFlipper(flippers.right);
+
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        const ballGradient = ctx.createRadialGradient(ball.x - 4, ball.y - 4, 2, ball.x, ball.y, ball.radius);
+        ballGradient.addColorStop(0, '#ffffff');
+        ballGradient.addColorStop(1, '#cdd4ff');
+        ctx.fillStyle = ballGradient;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffffaa';
+        ctx.stroke();
+      }
+
+      function drawFlipper(flipper) {
+        ctx.save();
+        ctx.translate(flipper.cx, flipper.cy);
+        const factor = flipper.active ? 1 : 0;
+        const angle = flipper.restAngle + flipper.swing * factor;
+        ctx.rotate(angle);
+        const gradient = ctx.createLinearGradient(-flipper.length / 2, 0, flipper.length / 2, 0);
+        gradient.addColorStop(0, '#f836ff');
+        gradient.addColorStop(1, '#32e0ff');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(-flipper.length / 2, -flipper.thickness / 2, flipper.length, flipper.thickness);
+        ctx.strokeStyle = '#ffffff44';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-flipper.length / 2, -flipper.thickness / 2, flipper.length, flipper.thickness);
+        ctx.restore();
+      }
+
+      function step() {
+        if (!running) return;
+        updatePhysics();
+        drawScene();
+        animationId = requestAnimationFrame(step);
+      }
+
+      function startGame() {
+        if (running) return;
+        running = true;
+        drawScene();
+        animationId = requestAnimationFrame(step);
+      }
+
+      function stopGame() {
+        running = false;
+        if (animationId) cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+
+      function handleMotion(event) {
+        if (!running) return;
+        const acceleration = event.accelerationIncludingGravity;
+        if (!acceleration) return;
+        const now = performance.now();
+        const x = acceleration.x ?? 0;
+        const y = acceleration.y ?? 0;
+
+        sensorStatus.textContent = 'Sterowanie ruchem aktywne';
+
+        if (lastX !== null) {
+          const deltaX = x - lastX;
+          if (Math.abs(deltaX) > 5.8 && now - lastShake > 220) {
+            if (deltaX < 0) {
+              activateFlipper('left');
+            } else {
+              activateFlipper('right');
+            }
+            lastShake = now;
+          }
+        }
+        lastX = x;
+
+        if (!ball.launched) {
+          if (y > 7) {
+            pullStage = 1;
+            pullPeak = y;
+            pullStageTime = now;
+          } else if (pullStage === 1 && y < -7 && now - pullStageTime < 800) {
+            const power = 10 + Math.min(6, pullPeak - y);
+            launchBall(power);
+            pullStage = 0;
+          } else if (pullStage === 1 && now - pullStageTime >= 800) {
+            pullStage = 0;
+          }
+        }
+      }
+
+      function openPinball() {
+        body.classList.add('pinball-open');
+        overlay.classList.add('active');
+        overlay.setAttribute('aria-hidden', 'false');
+        resetBall(true);
+        drawScene();
+        ensureHaptics();
+        ensureMotionAccess().catch(() => {
+          /* oczekiwanie na ręczne przyznanie */
+        });
+        startGame();
+        closePinballButton.focus();
+      }
+
+      function closePinball() {
+        body.classList.remove('pinball-open');
+        overlay.classList.remove('active');
+        overlay.setAttribute('aria-hidden', 'true');
+        stopGame();
+        detachMotionListener();
+        lastX = null;
+        lastShake = 0;
+        pullStage = 0;
+      }
+
+      openPinballButton.addEventListener('click', () => {
+        openPinball();
+      });
+
+      closePinballButton.addEventListener('click', () => {
+        closePinball();
+      });
+
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && overlay.classList.contains('active')) {
+          closePinball();
+        }
+      });
+
+      requestMotionButton.addEventListener('click', () => {
+        ensureMotionAccess().catch(() => {
+          sensorStatus.textContent = 'Spróbuj ponownie udzielić zgody na czujniki ruchu.';
+        });
+      });
+
+      launchButton.addEventListener('click', () => launchBall(10));
+      leftButton.addEventListener('click', () => activateFlipper('left'));
+      rightButton.addEventListener('click', () => activateFlipper('right'));
+
+      canvas.addEventListener('pointerdown', event => {
+        if (event.pointerType !== 'touch') return;
+        pointerTrackingId = event.pointerId;
+        maxPointerPressure = event.pressure ?? 0;
+        forceArmed = !ball.launched;
+      });
+
+      canvas.addEventListener('pointermove', event => {
+        if (!forceArmed || event.pointerId !== pointerTrackingId) return;
+        maxPointerPressure = Math.max(maxPointerPressure, event.pressure ?? 0);
+      });
+
+      function releasePointer(event) {
+        if (forceArmed && event.pointerId === pointerTrackingId) {
+          if (maxPointerPressure > 0.55 && !ball.launched) {
+            const bonus = Math.min(7, (maxPointerPressure - 0.55) * 18);
+            launchBall(10 + bonus);
+          }
+        }
+        forceArmed = false;
+        pointerTrackingId = null;
+        maxPointerPressure = 0;
+      }
+
+      canvas.addEventListener('pointerup', releasePointer);
+      canvas.addEventListener('pointercancel', releasePointer);
+
+      canvas.addEventListener(
+        'touchstart',
+        event => {
+          if (event.touches.length) {
+            forceArmed = !ball.launched;
+            for (const touch of event.touches) {
+              maxPointerPressure = Math.max(maxPointerPressure, touch.force ?? 0);
+            }
+          }
+        },
+        { passive: true }
+      );
+
+      canvas.addEventListener(
+        'touchmove',
+        event => {
+          if (!forceArmed) return;
+          for (const touch of event.touches) {
+            maxPointerPressure = Math.max(maxPointerPressure, touch.force ?? 0);
+          }
+        },
+        { passive: true }
+      );
+
+      canvas.addEventListener(
+        'touchend',
+        () => {
+          if (forceArmed && maxPointerPressure > 0.55 && !ball.launched) {
+            const bonus = Math.min(7, (maxPointerPressure - 0.55) * 18);
+            launchBall(10 + bonus);
+          }
+          forceArmed = false;
+          maxPointerPressure = 0;
+        },
+        { passive: true }
+      );
+
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) {
+          closePinball();
+        }
+      });
     </script>
   </body>
 </html>
